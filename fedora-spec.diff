@@ -5,21 +5,23 @@
  Name:       elisa-player
  Version:    26.08.1
 -Release:    1%{?dist}
-+Release:    2.vlc%{?dist}
++Release:    3.vlc%{?dist}
  Summary:    Elisa music player
  
  # Main program LGPLv3+
-@@ -17,6 +17,9 @@
+@@ -17,6 +17,11 @@
  
  Source0: https://download.kde.org/%{stable_kf6}/release-service/%{version}/src/elisa-%{version}.tar.xz
  
 +# Local: push radio "now playing" title/artist changes to MPRIS (Plasma media widget)
 +Patch0:  elisa-mpris-radio-metadata.patch
++# Local: use VLC's PulseAudio output so PipeWire plays at the track's native sample rate
++Patch1:  elisa-libvlc-pulse-output.patch
 +
  BuildRequires:  gcc-c++
  BuildRequires:  cmake
  BuildRequires:  extra-cmake-modules
-@@ -56,7 +59,14 @@
+@@ -56,7 +61,14 @@
  BuildRequires:  cmake(KF6KIO)
  BuildRequires:  cmake(KF6QQC2DesktopStyle)
  
@@ -29,15 +31,18 @@
  Requires:       hicolor-icon-theme
 +# libVLC loads these as plugins at runtime (http access, mp3 decoding, audio output)
 +Requires:       vlc-plugins-base%{?_isa}
-+Requires:       (vlc-plugin-pipewire%{?_isa} or vlc-plugin-pulseaudio%{?_isa})
++Requires:       vlc-plugin-pulseaudio%{?_isa}
 +Recommends:     vlc-plugin-ffmpeg%{?_isa}
  Requires:       dbus-common
  # QML module dependencies
  Requires:       kf6-kirigami%{?_isa}
-@@ -95,6 +105,12 @@
+@@ -95,6 +107,15 @@
  %{_kf6_libdir}/elisa/
  
  %changelog
++* Sat Sep 26 2026 mercurious <dutch.money@gmail.com> - 26.08.1-3.vlc
++- Use VLC's PulseAudio output so PipeWire runs the DAC at the native sample rate
++
 +* Sat Sep 26 2026 mercurious <dutch.money@gmail.com> - 26.08.1-2.vlc
 +- Update MPRIS metadata when a radio stream's now-playing title changes
 +

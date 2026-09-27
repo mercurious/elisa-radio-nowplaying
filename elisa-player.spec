@@ -6,7 +6,7 @@ ExcludeArch: %{ix86}
 
 Name:       elisa-player
 Version:    26.08.1
-Release:    2.vlc%{?dist}
+Release:    3.vlc%{?dist}
 Summary:    Elisa music player
 
 # Main program LGPLv3+
@@ -19,6 +19,8 @@ Source0: https://download.kde.org/%{stable_kf6}/release-service/%{version}/src/e
 
 # Local: push radio "now playing" title/artist changes to MPRIS (Plasma media widget)
 Patch0:  elisa-mpris-radio-metadata.patch
+# Local: use VLC's PulseAudio output so PipeWire plays at the track's native sample rate
+Patch1:  elisa-libvlc-pulse-output.patch
 
 BuildRequires:  gcc-c++
 BuildRequires:  cmake
@@ -65,7 +67,7 @@ BuildRequires:  pkgconfig(libvlc)
 Requires:       hicolor-icon-theme
 # libVLC loads these as plugins at runtime (http access, mp3 decoding, audio output)
 Requires:       vlc-plugins-base%{?_isa}
-Requires:       (vlc-plugin-pipewire%{?_isa} or vlc-plugin-pulseaudio%{?_isa})
+Requires:       vlc-plugin-pulseaudio%{?_isa}
 Recommends:     vlc-plugin-ffmpeg%{?_isa}
 Requires:       dbus-common
 # QML module dependencies
@@ -105,6 +107,9 @@ appstream-util validate-relax --nonet %{buildroot}%{_kf6_metainfodir}/org.kde.el
 %{_kf6_libdir}/elisa/
 
 %changelog
+* Sat Sep 26 2026 mercurious <dutch.money@gmail.com> - 26.08.1-3.vlc
+- Use VLC's PulseAudio output so PipeWire runs the DAC at the native sample rate
+
 * Sat Sep 26 2026 mercurious <dutch.money@gmail.com> - 26.08.1-2.vlc
 - Update MPRIS metadata when a radio stream's now-playing title changes
 

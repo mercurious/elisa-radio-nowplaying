@@ -1,0 +1,23 @@
+--- a/src/audiowrapper_libvlc.cpp
++++ b/src/audiowrapper_libvlc.cpp
+@@ -23,6 +23,7 @@
+ #endif
+ 
+ #include <cmath>
++#include <iterator>
+ 
+ #include <vlc/vlc.h>
+ #include <vlc/libvlc_version.h>
+@@ -98,7 +99,11 @@
+ AudioWrapper::AudioWrapper(QObject *parent) : QObject(parent), d(std::make_unique<AudioWrapperPrivate>())
+ {
+     d->mParent = this;
+-    d->mInstance = libvlc_new(0, nullptr);
++    // Prefer the PulseAudio output (pipewire-pulse): unlike VLC's native PipeWire output it
++    // advertises the stream's sample rate as node.rate, so PipeWire can run the DAC at the
++    // track's native rate (44.1/96/192 kHz...) instead of resampling everything to 48 kHz.
++    const char *const vlcArgs[] = {"--aout=pulse,any"};
++    d->mInstance = libvlc_new(std::size(vlcArgs), vlcArgs);
+     libvlc_set_user_agent(d->mInstance, QGuiApplication::applicationDisplayName().toUtf8().constData(), "Elisa Music Player");
+     libvlc_set_app_id(d->mInstance, "org.kde.elisa", ELISA_VERSION_STRING, "elisa");
+ 
