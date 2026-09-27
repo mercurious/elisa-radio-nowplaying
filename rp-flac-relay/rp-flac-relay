@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""Local relay that makes Radio Paradise's FLAC streams playable in VLC 3, and so in Elisa.
+
+VLC 3 can't play live Ogg FLAC over HTTP: its FLAC decoder deadlocks and no audio comes
+out, whatever the source. It does play a *native* FLAC stream. This relay fetches
+http://stream.radioparadise.com/<channel>, strips the ICY metadata, has ffmpeg re-encode
+the Ogg FLAC to native FLAC (lossless: the decoded PCM is bit-identical), and serves it on
+localhost with the track titles re-inserted as ICY metadata.
+
+    http://127.0.0.1:8394/flacm         Main Mix
+    http://127.0.0.1:8394/mellow-flacm  Mellow Mix
+    http://127.0.0.1:8394/rock-flacm    Rock Mix
+    http://127.0.0.1:8394/global-flacm  Global Mix
+"""
+import http.client
+import http.server
+import re
+import subprocess
+import threading
+
+UPSTREAM_HOST = "stream.radioparadise.com"
+LISTEN = ("127.0.0.1", 8394)
+OUT_METAINT = 16384
+CHANNEL = re.compile(r"^/([a-z0-9-]+)$")
+FFMPEG = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "ogg", "-i", "pipe:0",
+          "-map", "0:a", "-c:a", "flac", "-f", "flac", "pipe:1"]
+
+
+def icy_block(title):
+    """ICY metadata block: a length byte (in 16-byte units) plus the padded payload."""
+    if title is None:
+        return b"\x00"
+    payload = f"StreamTitle='{title}';".encode()[:255 * 16]
+    blocks = -(-len(payload) // 16)
+    return bytes([blocks]) + payload.ljust(blocks * 16, b"\x00")
+
+
+def pump_upstream(resp, metaint, sink, state):
+    """Copy upstream audio into ffmpeg as it arrives, pulling ICY titles out along the way."""
+    remaining = metaint
+    try:
+        while True:
+            audio = resp.read1(min(65536, remaining) if metaint else 65536)
+            if not audio:
+                break
+            sink.write(audio)
+            sink.flush()
+            if not metaint:
+                continue
+            remaining -= len(audio)
+            if remaining:
+                continue
+            remaining = metaint
+            length = resp.read(1)
+            if not length:
+                break
+            meta = resp.read(length[0] * 16)
+            found = re.search(rb"StreamTitle='(.*?)';", meta, re.S)
+            if found:
+                state["title"] = found.group(1).decode("utf-8", "replace")
+    except (OSError, ValueError):
+        pass  # client left and ffmpeg is gone, or upstream dropped
+    finally:
+        try:
+            sink.close()
+        except OSError:
+            pass
+
+
+class Relay(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.0"
+
+    def do_GET(self):
+        channel = CHANNEL.match(self.path)
+        if not channel:
+            self.send_error(404)
+            return
+
+        upstream = http.client.HTTPConnection(UPSTREAM_HOST, timeout=30)
+        upstream.request("GET", "/" + channel.group(1), headers={"Icy-MetaData": "1", "User-Agent": "rp-flac-relay"})
+        resp = upstream.getresponse()
+        if resp.status != 200:
+            self.send_error(502, f"upstream returned {resp.status}")
+            upstream.close()
+            return
+
+        ffmpeg = subprocess.Popen(FFMPEG, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        state = {"title": None}
+        metaint = int(resp.getheader("icy-metaint") or 0)
+        threading.Thread(target=pump_upstream, args=(resp, metaint, ffmpeg.stdin, state), daemon=True).start()
+
+        want_icy = self.headers.get("Icy-MetaData") == "1"
+        self.send_response(200)
+        self.send_header("Content-Type", "audio/flac")
+        if resp.getheader("icy-name"):
+            self.send_header("icy-name", resp.getheader("icy-name"))
+        if want_icy:
+            self.send_header("icy-metaint", str(OUT_METAINT))
+        self.end_headers()
+
+        sent_title = None
+        try:
+            while True:
+                audio = ffmpeg.stdout.read(OUT_METAINT) if want_icy else ffmpeg.stdout.read1(65536)
+                if not audio:
+                    break
+                self.wfile.write(audio)
+                if not want_icy:
+                    continue
+                if len(audio) < OUT_METAINT:
+                    break
+                title = state["title"]
+                self.wfile.write(icy_block(title if title != sent_title else None))
+                sent_title = title
+        except OSError:
+            pass  # player disconnected
+        finally:
+            ffmpeg.kill()
+            ffmpeg.wait()
+            upstream.close()
+
+
+if __name__ == "__main__":
+    server = http.server.ThreadingHTTPServer(LISTEN, Relay)
+    server.daemon_threads = True
+    server.serve_forever()

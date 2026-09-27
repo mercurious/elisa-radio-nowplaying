@@ -58,15 +58,33 @@ count should stay at 0. `wpctl inspect <sink-id>` should show `softVolumes` of
 ### Lossless radio: Radio Paradise
 
 SomaFM tops out at 256 kbps MP3. [Radio Paradise](https://radioparadise.com)
-streams lossless FLAC (16-bit/44.1 kHz), which plays through the chain above
-with no conversion at all. Use their **`flacm`** streams: the plain `flac`
-streams carry no track info, while `flacm` adds ICY now-playing metadata (so,
-as with SomaFM, they must be `http://`). Main, Mellow, Rock, and Global Mix have
-`flacm` variants; Serenity doesn't.
+streams lossless FLAC (16-bit/44.1 kHz). Use their **`flacm`** streams: the
+plain `flac` streams carry no track info, while `flacm` adds ICY now-playing
+metadata. Main, Mellow, Rock, and Global Mix have `flacm` variants; Serenity
+doesn't.
+
+**VLC 3 can't play them directly.** Radio Paradise sends Ogg FLAC, and VLC 3
+can't play *any* live Ogg FLAC over HTTP — the FLAC decoder hits
+`buffer deadlock prevented` and no audio ever comes out (the ICY titles still
+show, which makes it look like it's playing). Rebasing the Ogg timestamps or
+remuxing doesn't help; a *native* FLAC stream plays fine.
+
+`rp-flac-relay/` is a small localhost relay that bridges the gap: it fetches the
+`flacm` stream, strips the ICY metadata, has ffmpeg repackage the Ogg FLAC as
+native FLAC, and serves it on `127.0.0.1:8394` with the titles re-inserted.
+FLAC→FLAC is lossless — the decoded PCM is bit-identical to Radio Paradise's —
+and costs about 1% of a CPU core. Install it as a user service, then add the
+stations (quit Elisa first):
 
 ```bash
+install -Dm755 rp-flac-relay/rp-flac-relay ~/.local/bin/rp-flac-relay
+install -Dm644 rp-flac-relay/rp-flac-relay.service ~/.config/systemd/user/rp-flac-relay.service
+systemctl --user daemon-reload && systemctl --user enable --now rp-flac-relay
 ./add-radio-paradise-flac.py
 ```
+
+Elisa asks VLC for a 10 s network buffer on every stream, so any station takes
+about 10 s to start; the relay itself adds ~0.4 s.
 
 ## What's here
 
@@ -80,7 +98,8 @@ as with SomaFM, they must be `http://`). Main, Mellow, Rock, and Global Mix have
 | `build.sh` | Fetches the Fedora source RPM if needed and builds into `~/rpmbuild` |
 | `install.sh` | Installs the built RPM and version-locks it |
 | `fix-somafm-urls.py` | Rewrites SomaFM entries in Elisa's radio list to working `http://` URLs (backs up the DB) |
-| `add-radio-paradise-flac.py` | Adds Radio Paradise's lossless FLAC channels, with track info, to Elisa's radio list |
+| `add-radio-paradise-flac.py` | Adds Radio Paradise's lossless FLAC channels, with track info, to Elisa's radio list (via the relay) |
+| `rp-flac-relay/` | Localhost relay + systemd user unit that makes Radio Paradise FLAC playable in VLC 3 |
 
 ## Usage
 
@@ -126,6 +145,10 @@ sudo dnf versionlock delete elisa-player && sudo dnf distro-sync --allow-vendor-
 
 ```bash
 rm ~/.config/pipewire/pipewire-pulse.conf.d/60-hifi-resample.conf && systemctl --user restart pipewire-pulse
+```
+
+```bash
+systemctl --user disable --now rp-flac-relay && rm ~/.config/systemd/user/rp-flac-relay.service ~/.local/bin/rp-flac-relay
 ```
 
 Radio URL backups are at `~/.local/share/elisa/elisaDatabase.db.bak-<date>`.

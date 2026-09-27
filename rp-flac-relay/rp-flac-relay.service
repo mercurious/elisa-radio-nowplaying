@@ -1,0 +1,10 @@
+[Unit]
+Description=Radio Paradise FLAC relay for VLC/Elisa (127.0.0.1:8394)
+After=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/rp-flac-relay
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

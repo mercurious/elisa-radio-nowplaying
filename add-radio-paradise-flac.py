@@ -2,10 +2,11 @@
 """Add Radio Paradise's lossless FLAC channels to Elisa's radio list.
 
 Uses the "flacm" streams: FLAC 16-bit/44.1 kHz *with* ICY now-playing metadata
-(the plain "flac" streams carry no track info). They must be http:// because
-VLC 3 drops ICY metadata over HTTPS.
+(the plain "flac" streams carry no track info), played through the local
+rp-flac-relay, because VLC 3 can't play live Ogg FLAC directly.
 
-Backs up the database first. Quit Elisa before running. Safe to re-run.
+Backs up the database first. Quit Elisa before running. Safe to re-run; also
+moves stations added with the direct stream.radioparadise.com URLs to the relay.
 """
 import datetime
 import shutil
@@ -34,7 +35,14 @@ if not BACKUP.exists():
 
 con = sqlite3.connect(DB)
 for path, title in STATIONS:
-    url = f"http://stream.radioparadise.com/{path}"
+    url = f"http://127.0.0.1:8394/{path}"
+    cur = con.execute(
+        "UPDATE Radios SET HttpAddress = ? WHERE HttpAddress = ?",
+        (url, f"http://stream.radioparadise.com/{path}"),
+    )
+    if cur.rowcount:
+        print(f"moved to relay: {title}  {url}")
+        continue
     cur = con.execute(
         "INSERT OR IGNORE INTO Radios (HttpAddress, ImageAddress, Title, Comment) VALUES (?, ?, ?, ?)",
         (url, LOGO, title, "Lossless FLAC 16-bit/44.1 kHz"),
