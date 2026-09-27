@@ -83,3 +83,12 @@ Radio URL backups are at `~/.local/share/elisa/elisaDatabase.db.bak-<date>`.
 - Non-SomaFM stations saved with `https://` URLs have the same VLC limitation;
   switch them to `http://` if the station supports it.
 - Building needs ~1.3 GB RAM at 4 jobs; `build.sh` caps parallelism for 8 GB machines.
+
+## License
+
+LGPL-3.0-or-later, the same as Elisa — see [`COPYING.LESSER`](COPYING.LESSER)
+and the GPL-3.0 text it builds on in [`COPYING`](COPYING).
+
+`elisa-player.spec` and `fedora-spec.diff` are derived from Fedora's
+[elisa-player packaging](https://src.fedoraproject.org/rpms/elisa-player),
+whose spec files are MIT-licensed under the Fedora Project Contributor Agreement.
