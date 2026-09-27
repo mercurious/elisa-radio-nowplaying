@@ -55,6 +55,19 @@ The DAC and Elisa should show the same rate (e.g. `44100`) and Elisa's `ERR`
 count should stay at 0. `wpctl inspect <sink-id>` should show `softVolumes` of
 1.0 (volume done in hardware).
 
+### Lossless radio: Radio Paradise
+
+SomaFM tops out at 256 kbps MP3. [Radio Paradise](https://radioparadise.com)
+streams lossless FLAC (16-bit/44.1 kHz), which plays through the chain above
+with no conversion at all. Use their **`flacm`** streams: the plain `flac`
+streams carry no track info, while `flacm` adds ICY now-playing metadata (so,
+as with SomaFM, they must be `http://`). Main, Mellow, Rock, and Global Mix have
+`flacm` variants; Serenity doesn't.
+
+```bash
+./add-radio-paradise-flac.py
+```
+
 ## What's here
 
 | File | Purpose |
@@ -67,6 +80,7 @@ count should stay at 0. `wpctl inspect <sink-id>` should show `softVolumes` of
 | `build.sh` | Fetches the Fedora source RPM if needed and builds into `~/rpmbuild` |
 | `install.sh` | Installs the built RPM and version-locks it |
 | `fix-somafm-urls.py` | Rewrites SomaFM entries in Elisa's radio list to working `http://` URLs (backs up the DB) |
+| `add-radio-paradise-flac.py` | Adds Radio Paradise's lossless FLAC channels, with track info, to Elisa's radio list |
 
 ## Usage
 
