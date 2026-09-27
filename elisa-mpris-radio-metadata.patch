@@ -1,0 +1,52 @@
+diff --git a/src/mpris2/mediaplayer2player.cpp b/src/mpris2/mediaplayer2player.cpp
+index e5f47b6..3b30830 100644
+--- a/src/mpris2/mediaplayer2player.cpp
++++ b/src/mpris2/mediaplayer2player.cpp
+@@ -65,6 +65,11 @@ MediaPlayer2Player::MediaPlayer2Player(MediaPlayListProxyModel *playListControle
+             this, &MediaPlayer2Player::playerSeeked);
+     connect(m_manageAudioPlayer, &ManageAudioPlayer::audioDurationChanged,
+             this, &MediaPlayer2Player::audioDurationChanged);
++    // radio streams update title/artist in place while playing (ICY "now playing")
++    connect(m_manageHeaderBar, &ManageHeaderBar::titleChanged,
++            this, &MediaPlayer2Player::radioMetadataChanged, Qt::QueuedConnection);
++    connect(m_manageHeaderBar, &ManageHeaderBar::artistChanged,
++            this, &MediaPlayer2Player::radioMetadataChanged, Qt::QueuedConnection);
+     connect(m_audioPlayer, &AudioWrapper::volumeChanged,
+             this, &MediaPlayer2Player::playerVolumeChanged);
+     connect(m_playListControler, &MediaPlayListProxyModel::shuffleModeChanged,
+@@ -377,6 +382,22 @@ void MediaPlayer2Player::audioDurationChanged()
+     setPropertyPosition(static_cast<int>(m_manageAudioPlayer->playerPosition()));
+ }
+ 
++void MediaPlayer2Player::radioMetadataChanged()
++{
++    // track changes are already handled by setCurrentTrack(); only follow in-place radio updates
++    if (m_manageHeaderBar->trackType() != ElisaUtils::Radio) {
++        return;
++    }
++
++    const auto newMetadata = getMetadataOfCurrentTrack();
++    if (newMetadata == m_metadata) {
++        return;
++    }
++
++    m_metadata = newMetadata;
++    signalPropertiesChange(QStringLiteral("Metadata"), Metadata());
++}
++
+ void MediaPlayer2Player::playerVolumeChanged()
+ {
+     setVolume(m_audioPlayer->volume() / 100.0);
+diff --git a/src/mpris2/mediaplayer2player.h b/src/mpris2/mediaplayer2player.h
+index 6712d26..671a888 100644
+--- a/src/mpris2/mediaplayer2player.h
++++ b/src/mpris2/mediaplayer2player.h
+@@ -129,6 +129,8 @@ private Q_SLOTS:
+ 
+     void audioDurationChanged();
+ 
++    void radioMetadataChanged();
++
+     void playerVolumeChanged();
+ 
+     void shuffleModeChanged();
