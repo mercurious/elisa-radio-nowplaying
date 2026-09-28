@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""Local relay that smooths WNYC's bursty CDN delivery so VLC 3 (and so Elisa) doesn't stutter.
+
+WNYC's edge streaming CDN (a load-balanced "FLV-ICY Edge Streaming Server" fleet)
+delivers audio in bursts -- gaps up to ~1.3s between reads -- instead of a steady
+trickle like SomaFM's. VLC's jitter buffer can't fully absorb that, so playback
+repeatedly flushes and drops to silence for as long as it plays.
+
+This relay reads the upstream MP3 into a buffer as fast as it arrives (bursts and
+all), then drips it out to the client at the stream's own bitrate (a leaky bucket):
+a few seconds of prebuffer absorb upstream bursts, and steady-paced writes downstream
+mean VLC never sees them. No transcoding -- same MP3 bytes, just paced.
+
+(ffmpeg's -re doesn't help here: applied to a live network source it paces
+*reads* against the input's own arrival pattern, so it reproduces the burstiness
+instead of smoothing it out. Hence a plain buffer-and-drip loop instead.)
+
+(WNYC's streams don't send ICY in-band metadata -- icy-metaint is 0 -- so unlike
+rp-flac-relay there's no now-playing title to relay; it's talk radio, not music.)
+
+    http://127.0.0.1:8395/wnycfm   WNYC 93.9 FM
+    http://127.0.0.1:8395/wnycam   WNYC AM 820
+"""
+import http.client
+import http.server
+import queue
+import re
+import threading
+import time
+
+LISTEN = ("127.0.0.1", 8395)
+STATIONS = {
+    "wnycfm": ("fm939.wnyc.org", "/wnycfm"),
+    "wnycam": ("am820.wnyc.org", "/wnycam"),
+}
+PATH = re.compile(r"^/([a-z0-9]+)$")
+DEFAULT_BITRATE_KBPS = 96
+PREBUFFER_SECONDS = 3
+CHUNK = 2048
+
+
+def pump_upstream(host, path, chunks, state):
+    """Read upstream as fast as it arrives; the client-facing loop paces the output."""
+    try:
+        conn = http.client.HTTPSConnection(host, timeout=30)
+        conn.request("GET", path, headers={"User-Agent": "wnyc-relay", "Icy-MetaData": "0"})
+        resp = conn.getresponse()
+        if resp.status != 200:
+            return
+        state["bitrate_kbps"] = int(resp.getheader("icy-br") or DEFAULT_BITRATE_KBPS)
+        while True:
+            data = resp.read1(65536)
+            if not data:
+                break
+            chunks.put(data)
+    except OSError:
+        pass
+    finally:
+        chunks.put(None)  # signal EOF to the consumer
+
+
+class Relay(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.0"
+
+    def do_GET(self):
+        match = PATH.match(self.path)
+        station = match.group(1) if match else None
+        if station not in STATIONS:
+            self.send_error(404)
+            return
+
+        host, path = STATIONS[station]
+        chunks = queue.Queue()
+        state = {"bitrate_kbps": DEFAULT_BITRATE_KBPS}
+        threading.Thread(target=pump_upstream, args=(host, path, chunks, state), daemon=True).start()
+
+        # Prebuffer so later upstream bursts have slack to land in before we run dry.
+        buffer = bytearray()
+        target = DEFAULT_BITRATE_KBPS * 1000 // 8 * PREBUFFER_SECONDS
+        while len(buffer) < target:
+            item = chunks.get()
+            if item is None:
+                break
+            buffer += item
+
+        self.send_response(200)
+        self.send_header("Content-Type", "audio/mpeg")
+        self.end_headers()
+
+        bytes_per_sec = state["bitrate_kbps"] * 1000 // 8
+        start = time.monotonic()
+        sent = 0
+        eof = False
+        try:
+            while buffer or not eof:
+                while len(buffer) < CHUNK and not eof:
+                    item = chunks.get()
+                    if item is None:
+                        eof = True
+                        break
+                    buffer += item
+                piece = bytes(buffer[:CHUNK])
+                del buffer[:CHUNK]
+                if not piece:
+                    break
+                due = start + (sent + len(piece)) / bytes_per_sec
+                delay = due - time.monotonic()
+                if delay > 0:
+                    time.sleep(delay)
+                self.wfile.write(piece)
+                sent += len(piece)
+        except OSError:
+            pass  # player disconnected
+
+
+if __name__ == "__main__":
+    server = http.server.ThreadingHTTPServer(LISTEN, Relay)
+    server.daemon_threads = True
+    server.serve_forever()

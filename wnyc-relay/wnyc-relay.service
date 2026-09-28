@@ -1,0 +1,10 @@
+[Unit]
+Description=WNYC stream-pacing relay for VLC/Elisa (127.0.0.1:8395)
+After=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/wnyc-relay
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

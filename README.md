@@ -86,6 +86,39 @@ systemctl --user daemon-reload && systemctl --user enable --now rp-flac-relay
 Elisa asks VLC for a 10 s network buffer on every stream, so any station takes
 about 10 s to start; the relay itself adds ~0.4 s.
 
+### Stuttering / silent radio: WNYC
+
+WNYC's stream URLs (from [wnyc.org/live](https://wnyc.org/live)) don't have the
+SomaFM problems, but two new ones:
+
+1. **The MP3 stream stutters.** WNYC's edge CDN delivers audio in bursts -- gaps
+   up to ~1.3s between reads, measured directly -- instead of a steady trickle.
+   VLC 3's jitter buffer can't absorb that, so playback repeatedly flushes and
+   drops to silence for as long as it plays, even with Elisa's 10s network
+   buffer.
+2. **The AAC stream never plays at all.** It's HE-AACv2 with implicit SBR/PS
+   signaling (the ADTS header claims mono; the real decoded audio is stereo via
+   parametric stereo). Both of VLC 3's AAC decoders (`faad`, `avcodec`)
+   miscalculate the playback clock for that signaling style and never recover;
+   `fdk-aac` is compiled into this VLC build only as an encoder, so there's no
+   better decoder to switch to. Not fixable short of a newer VLC -- the AAC
+   entry has to go.
+
+`wnyc-relay/` fixes the MP3 stream: it reads the upstream audio into a buffer as
+fast as it arrives (bursts and all), then drips it out to Elisa at the stream's
+own bitrate -- a few seconds of prebuffer absorb the bursts, so VLC only ever
+sees a steady trickle. Install it as a user service, then update the station
+(quit Elisa first):
+
+```bash
+install -Dm755 wnyc-relay/wnyc-relay ~/.local/bin/wnyc-relay
+install -Dm644 wnyc-relay/wnyc-relay.service ~/.config/systemd/user/wnyc-relay.service
+systemctl --user daemon-reload && systemctl --user enable --now wnyc-relay
+./add-wnyc.py
+```
+
+`add-wnyc.py` points the WNYC MP3 entry at the relay and removes the AAC entry.
+
 ## What's here
 
 | File | Purpose |
@@ -100,6 +133,8 @@ about 10 s to start; the relay itself adds ~0.4 s.
 | `fix-somafm-urls.py` | Rewrites SomaFM entries in Elisa's radio list to working `http://` URLs (backs up the DB) |
 | `add-radio-paradise-flac.py` | Adds Radio Paradise's lossless FLAC channels, with track info, to Elisa's radio list (via the relay) |
 | `rp-flac-relay/` | Localhost relay + systemd user unit that makes Radio Paradise FLAC playable in VLC 3 |
+| `add-wnyc.py` | Points Elisa's WNYC MP3 entry at the relay and removes the unfixable AAC entry |
+| `wnyc-relay/` | Localhost relay + systemd user unit that paces WNYC's bursty stream so VLC 3 doesn't stutter |
 
 ## Usage
 
@@ -149,6 +184,10 @@ rm ~/.config/pipewire/pipewire-pulse.conf.d/60-hifi-resample.conf && systemctl -
 
 ```bash
 systemctl --user disable --now rp-flac-relay && rm ~/.config/systemd/user/rp-flac-relay.service ~/.local/bin/rp-flac-relay
+```
+
+```bash
+systemctl --user disable --now wnyc-relay && rm ~/.config/systemd/user/wnyc-relay.service ~/.local/bin/wnyc-relay
 ```
 
 Radio URL backups are at `~/.local/share/elisa/elisaDatabase.db.bak-<date>`.
