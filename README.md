@@ -131,6 +131,7 @@ systemctl --user daemon-reload && systemctl --user enable --now wnyc-relay
 | `build.sh` | Fetches the Fedora source RPM if needed and builds into `~/rpmbuild` |
 | `install.sh` | Installs the built RPM and version-locks it |
 | `fix-somafm-urls.py` | Rewrites SomaFM entries in Elisa's radio list to working `http://` URLs (backs up the DB) |
+| `add-somafm-channels.py` | Adds every SomaFM channel not already in Elisa's radio list (`--dry-run` to preview) |
 | `add-radio-paradise-flac.py` | Adds Radio Paradise's lossless FLAC channels, with track info, to Elisa's radio list (via the relay) |
 | `rp-flac-relay/` | Localhost relay + systemd user unit that makes Radio Paradise FLAC playable in VLC 3 |
 | `add-wnyc.py` | Points Elisa's WNYC MP3 entry at the relay and removes the unfixable AAC entry |
