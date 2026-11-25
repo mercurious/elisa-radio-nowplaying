@@ -75,7 +75,7 @@ diff -r es-orig/elisa-26.08.1/src/qml/ContentView.qml es/elisa-26.08.1/src/qml/C
 diff -r es-orig/elisa-26.08.1/src/qml/RadioGridView.qml es/elisa-26.08.1/src/qml/RadioGridView.qml
 --- a/src/qml/RadioGridView.qml
 +++ b/src/qml/RadioGridView.qml
-@@ -0,0 +1,551 @@
+@@ -0,0 +1,667 @@
 +/*
 +   SPDX-License-Identifier: LGPL-3.0-or-later
 + */
@@ -92,19 +92,18 @@ diff -r es-orig/elisa-26.08.1/src/qml/RadioGridView.qml es/elisa-26.08.1/src/qml
 +import org.kde.elisa
 +
 +// Radio Stations as a resizable grid of tiles. SomaFM stations are enriched with the
-+// live "now playing" song and listener count from somafm.com/channels.json.
++// live "now playing" song and listener count from somafm.com. Radio Paradise stations get live
++// listeners and song, WNYC stations the show on air (WNYC publishes no listener counts).
 +AbstractDataView {
 +    id: radioView
 +
 +    readonly property int minTileSize: 120
 +    readonly property int maxTileSize: 400
-+    readonly property string liveUrl: "https://somafm.com/channels.json"
 +
 +    readonly property bool tiled: viewStyle === ViewManager.GridStyle
 +
 +    property int tileSize: 200
 +    property int sortMode: 0 // 0: listeners, 1: A-Z
-+    property var channels: ({})
 +    property bool liveLoaded: false
 +    property int totalListeners: 0
 +
@@ -165,24 +164,74 @@ diff -r es-orig/elisa-26.08.1/src/qml/RadioGridView.qml es/elisa-26.08.1/src/qml
 +                                                         ElisaUtils.TriggerPlay);
 +    }
 +
-+    // "http://ice1.somafm.com/groovesalad-256-mp3" -> channel "groovesalad"
-+    function channelFor(url: string): var {
-+        const match = /somafm\.com\/([a-z0-9]+)/i.exec(url);
-+        return match ? channels[match[1]] : undefined;
++    readonly property var noLiveData: ({listeners: -1, nowPlaying: "", genre: "", desc: "", logo: ""})
++
++    // Live data per source, keyed by each source's own station id
++    property var soma: ({})
++    property var paradise: ({})
++    property var wnyc: ({})
++
++    // Look up live data for a station by its stream URL:
++    //   http://ice1.somafm.com/groovesalad-256-mp3, http://127.0.0.1:8394/mellow-flacm (Radio Paradise
++    //   relay), http://127.0.0.1:8395/wnycfm (WNYC relay)
++    function liveFields(url: string): var {
++        let match = /somafm\.com\/([a-z0-9]+)/i.exec(url);
++        if (match) {
++            const channel = soma[match[1]];
++            if (!channel) {
++                return noLiveData;
++            }
++            return {
++                listeners: parseInt(channel.listeners) || 0,
++                nowPlaying: channel.lastPlaying || "",
++                genre: channel.genre || "",
++                desc: channel.description || "",
++                logo: channel.largeimage || channel.image || "",
++            };
++        }
++
++        match = /(?:stream\.radioparadise\.com|127\.0\.0\.1:8394)\/([a-z0-9-]+)/i.exec(url);
++        if (match) {
++            const channel = paradise[paradiseStreamName(match[1])];
++            if (!channel) {
++                return noLiveData;
++            }
++            return {
++                listeners: channel.listeners,
++                nowPlaying: channel.nowPlaying || "",
++                genre: "",
++                desc: "",
++                logo: channel.image || "",
++                preferLogo: true,
++            };
++        }
++
++        match = /(?:\.wnyc\.org|127\.0\.0\.1:8395)\/(wnyc[a-z]+)/i.exec(url);
++        if (match) {
++            const show = wnyc[match[1] === "wnycam" ? "wnyc-am820" : "wnyc-fm939"];
++            if (!show) {
++                return noLiveData;
++            }
++            return {
++                listeners: -1, // WNYC does not publish listener counts
++                nowPlaying: show.title || "",
++                genre: "",
++                desc: stripHtml(show.description || ""),
++                logo: "",
++            };
++        }
++
++        return noLiveData;
 +    }
 +
-+    function liveFields(url: string): var {
-+        const channel = channelFor(url);
-+        if (!channel) {
-+            return {listeners: -1, nowPlaying: "", genre: "", desc: "", logo: ""};
-+        }
-+        return {
-+            listeners: parseInt(channel.listeners) || 0,
-+            nowPlaying: channel.lastPlaying || "",
-+            genre: channel.genre || "",
-+            desc: channel.description || "",
-+            logo: channel.largeimage || channel.image || "",
-+        };
++    // "flacm" / "mellow-flacm" / "rock-320" -> Radio Paradise stream_name
++    function paradiseStreamName(path: string): string {
++        const name = path.replace(/-?(flacm?|aac|mp3|ogg|\d+k?)$/i, "");
++        return name === "" || name === "main" ? "main-mix" : name;
++    }
++
++    function stripHtml(text: string): string {
++        return text.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
 +    }
 +
 +    // Rebuild the tiles from the database rows (stations added, removed or edited)
@@ -201,7 +250,7 @@ diff -r es-orig/elisa-26.08.1/src/qml/RadioGridView.qml es/elisa-26.08.1/src/qml
 +                srcRow: row,
 +                title: String(model.data(idx, Qt.DisplayRole) || ""),
 +                url: url,
-+                imageUrl: imageUrl || live.logo,
++                imageUrl: live.preferLogo ? live.logo : (imageUrl || live.logo),
 +                desc: live.desc || String(model.data(idx, DataTypes.CommentRole) || ""),
 +                genre: live.genre,
 +                listeners: live.listeners,
@@ -209,6 +258,7 @@ diff -r es-orig/elisa-26.08.1/src/qml/RadioGridView.qml es/elisa-26.08.1/src/qml
 +            });
 +        }
 +        resort();
++        refreshLive();
 +    }
 +
 +    // Update tiles in place from the latest channel data
@@ -221,6 +271,9 @@ diff -r es-orig/elisa-26.08.1/src/qml/RadioGridView.qml es/elisa-26.08.1/src/qml
 +            tiles.setProperty(i, "genre", live.genre);
 +            if (live.desc) {
 +                tiles.setProperty(i, "desc", live.desc);
++            }
++            if (live.preferLogo && live.logo) {
++                tiles.setProperty(i, "imageUrl", live.logo);
 +            }
 +            if (live.listeners > 0) {
 +                total += live.listeners;
@@ -255,38 +308,101 @@ diff -r es-orig/elisa-26.08.1/src/qml/RadioGridView.qml es/elisa-26.08.1/src/qml
 +        }
 +    }
 +
-+    function refreshLive() {
-+        if (fetching) {
++    property var inflight: ({})
++
++    function fetchJson(url: string, onData: var) {
++        if (inflight[url]) {
 +            return;
 +        }
-+        fetching = true;
++        inflight[url] = true;
 +        const xhr = new XMLHttpRequest();
 +        xhr.onreadystatechange = () => {
 +            if (xhr.readyState !== XMLHttpRequest.DONE) {
 +                return;
 +            }
-+            fetching = false;
++            delete inflight[url];
 +            if (xhr.status !== 200) {
-+                console.warn("SomaFM live data unavailable:", xhr.status);
++                console.warn("Live radio data unavailable:", url, xhr.status);
 +                return;
 +            }
 +            try {
-+                const map = {};
-+                for (const channel of JSON.parse(xhr.responseText).channels) {
-+                    map[channel.id] = channel;
-+                }
-+                channels = map;
++                onData(JSON.parse(xhr.responseText));
 +                liveLoaded = true;
 +                applyLive();
 +            } catch (e) {
-+                console.warn("SomaFM live data unreadable:", e);
++                console.warn("Live radio data unreadable:", url, e);
 +            }
 +        };
-+        xhr.open("GET", liveUrl);
++        xhr.open("GET", url);
 +        xhr.send();
 +    }
 +
-+    property bool fetching: false
++    function usesSource(pattern: var): bool {
++        for (let i = 0; i < tiles.count; ++i) {
++            if (pattern.test(tiles.get(i).url)) {
++                return true;
++            }
++        }
++        return false;
++    }
++
++    function refreshLive() {
++        if (usesSource(/somafm\.com/i)) {
++            fetchJson("https://somafm.com/channels.json", data => {
++                const map = {};
++                for (const channel of data.channels) {
++                    map[channel.id] = channel;
++                }
++                soma = map;
++            });
++        }
++
++        if (usesSource(/stream\.radioparadise\.com|127\.0\.0\.1:8394/i)) {
++            fetchJson("https://api.radioparadise.com/api/list_chan", data => {
++                const map = {};
++                for (const channel of data) {
++                    map[channel.stream_name] = {
++                        chan: channel.chan,
++                        listeners: parseInt(channel.current_listeners) || 0,
++                        image: channel.image || "",
++                        nowPlaying: paradise[channel.stream_name] ? paradise[channel.stream_name].nowPlaying : "",
++                    };
++                }
++                paradise = map;
++                refreshParadiseSongs();
++            });
++        }
++
++        if (usesSource(/\.wnyc\.org|127\.0\.0\.1:8395/i)) {
++            fetchJson("https://api.wnyc.org/api/v1/whats_on/", data => {
++                const map = {};
++                for (const key of Object.keys(data)) {
++                    map[key] = data[key].current_show || {};
++                }
++                wnyc = map;
++            });
++        }
++    }
++
++    // Radio Paradise's channel list has no track info; ask per channel that has a tile
++    function refreshParadiseSongs() {
++        for (const name of Object.keys(paradise)) {
++            const channel = paradise[name];
++            let wanted = false;
++            for (let i = 0; i < tiles.count && !wanted; ++i) {
++                const match = /(?:stream\.radioparadise\.com|127\.0\.0\.1:8394)\/([a-z0-9-]+)/i.exec(tiles.get(i).url);
++                wanted = match !== null && paradiseStreamName(match[1]) === name;
++            }
++            if (!wanted) {
++                continue;
++            }
++            fetchJson("https://api.radioparadise.com/api/now_playing?chan=" + channel.chan, song => {
++                if (paradise[name]) {
++                    paradise[name].nowPlaying = song.artist ? song.artist + " - " + song.title : (song.title || "");
++                }
++            });
++        }
++    }
 +
 +    onSortModeChanged: resort()
 +    onContentModelChanged: rebuildTiles()
@@ -389,7 +505,7 @@ diff -r es-orig/elisa-26.08.1/src/qml/RadioGridView.qml es/elisa-26.08.1/src/qml
 +                elide: Text.ElideRight
 +                color: Kirigami.Theme.disabledTextColor
 +                text: radioView.liveLoaded
-+                    ? KI18n.i18nc("@info SomaFM live stats", "SomaFM: %1 listeners right now", radioView.totalListeners)
++                    ? KI18n.i18nc("@info SomaFM live stats", "%1 listeners right now", radioView.totalListeners)
 +                    : ""
 +            }
 +

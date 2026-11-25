@@ -122,10 +122,16 @@ systemctl --user daemon-reload && systemctl --user enable --now wnyc-relay
 ## Radio Stations grid view
 
 `elisa-radio-grid-view.patch` replaces Radio Stations' plain list with a grid of
-station tiles (`RadioGridView.qml`). SomaFM stations show their logo, genre, the live
-listener count and the song playing right now, refreshed every 30 s from
-`somafm.com/channels.json` while the view is visible. Other stations show their
-logo and description.
+station tiles (`RadioGridView.qml`). Live data is refreshed every 30 s while the view
+is visible, for stations whose stream URL is recognised:
+
+| Station | Source | Tile shows |
+| --- | --- | --- |
+| SomaFM | `somafm.com/channels.json` | song, listeners, genre |
+| Radio Paradise (direct or via `rp-flac-relay`) | `api.radioparadise.com` (`list_chan`, `now_playing`) | song, listeners, per-channel art |
+| WNYC (direct or via `wnyc-relay`) | `api.wnyc.org/api/v1/whats_on/` | show on air (no listener count published) |
+
+Other stations show their logo and description.
 
 - Click a tile to play it; right-click for Play / Edit.
 - Size: slider in the view header, Ctrl+scroll, or touchpad/touch pinch. The
