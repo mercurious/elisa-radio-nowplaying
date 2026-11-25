@@ -9,7 +9,7 @@
  Summary:    Elisa music player
  
  # Main program LGPLv3+
-@@ -17,6 +17,11 @@
+@@ -17,6 +17,13 @@
  
  Source0: https://download.kde.org/%{stable_kf6}/release-service/%{version}/src/elisa-%{version}.tar.xz
  
@@ -17,11 +17,13 @@
 +Patch0:  elisa-mpris-radio-metadata.patch
 +# Local: use VLC's PulseAudio output so PipeWire plays at the track's native sample rate
 +Patch1:  elisa-libvlc-pulse-output.patch
++# Local: Radio Stations as a resizable tile grid with live SomaFM now-playing and listener counts
++Patch2:  elisa-radio-grid-view.patch
 +
  BuildRequires:  gcc-c++
  BuildRequires:  cmake
  BuildRequires:  extra-cmake-modules
-@@ -56,7 +61,14 @@
+@@ -56,7 +63,14 @@
  BuildRequires:  cmake(KF6KIO)
  BuildRequires:  cmake(KF6QQC2DesktopStyle)
  
@@ -36,7 +38,7 @@
  Requires:       dbus-common
  # QML module dependencies
  Requires:       kf6-kirigami%{?_isa}
-@@ -95,6 +107,15 @@
+@@ -95,6 +109,15 @@
  %{_kf6_libdir}/elisa/
  
  %changelog

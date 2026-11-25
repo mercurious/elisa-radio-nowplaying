@@ -119,6 +119,22 @@ systemctl --user daemon-reload && systemctl --user enable --now wnyc-relay
 
 `add-wnyc.py` points the WNYC MP3 entry at the relay and removes the AAC entry.
 
+## Radio Stations grid view
+
+`elisa-radio-grid-view.patch` replaces Radio Stations' plain list with a grid of
+station tiles (`RadioGridView.qml`). SomaFM stations show their logo, genre, the live
+listener count and the song playing right now, refreshed every 30 s from
+`somafm.com/channels.json` while the view is visible. Other stations show their
+logo and description.
+
+- Click a tile to play it; right-click for Play / Edit.
+- Size: slider in the view header, Ctrl+scroll, or touchpad/touch pinch. The
+  toolbar's list/grid button switches to a compact one-column layout.
+- Sort by listeners (default) or A–Z. Size, layout and sort are remembered.
+- The station playing now has a highlighted border.
+- Only stations in Elisa's radio list get a tile; run `./add-somafm-channels.py`
+  to add the rest of SomaFM's channels.
+
 ## What's here
 
 | File | Purpose |
@@ -126,6 +142,7 @@ systemctl --user daemon-reload && systemctl --user enable --now wnyc-relay
 | `elisa-player.spec` | Fedora's spec with libVLC enabled, both patches, and a `.vlc` release tag |
 | `fedora-spec.diff` | The same changes as a diff against Fedora's `26.08.1-1` spec, for porting to new versions |
 | `elisa-mpris-radio-metadata.patch` | Elisa patch: push radio title/artist changes to MPRIS |
+| `elisa-radio-grid-view.patch` | Elisa patch: Radio Stations as a resizable tile grid with live SomaFM now-playing and listener counts |
 | `elisa-libvlc-pulse-output.patch` | Elisa patch: use VLC's Pulse output so playback runs at the native sample rate |
 | `pipewire/pipewire-pulse.conf.d/60-hifi-resample.conf` | PipeWire drop-in: highest-quality resampler for the cases that still need one |
 | `build.sh` | Fetches the Fedora source RPM if needed and builds into `~/rpmbuild` |

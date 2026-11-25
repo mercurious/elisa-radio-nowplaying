@@ -1,0 +1,606 @@
+diff -r es-orig/elisa-26.08.1/src/CMakeLists.txt es/elisa-26.08.1/src/CMakeLists.txt
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -343,6 +343,7 @@
+         qml/ContextView.qml
+         qml/DataGridView.qml
+         qml/DataTrackView.qml
++        qml/RadioGridView.qml
+         qml/DurationSlider.qml
+         qml/ElisaMainWindow.qml
+         qml/FlatButtonWithToolTip.qml
+diff -r es-orig/elisa-26.08.1/src/qml/ContentView.qml es/elisa-26.08.1/src/qml/ContentView.qml
+--- a/src/qml/ContentView.qml
++++ b/src/qml/ContentView.qml
+@@ -89,7 +89,7 @@
+         }
+ 
+         onOpenTrackView: configurationData => {
+-            contentViewContainer.openViewCommon(dataTrackView, {
++            const viewProperties = {
+                 filterType: configurationData.filterType,
+                 isSubPage: configurationData.expectedDepth > 1,
+                 mainTitle: configurationData.mainTitle,
+@@ -108,7 +108,13 @@
+                 sortOrderNames: configurationData.sortOrderNames,
+                 viewManager: viewManager,
+                 opacity: 1,
+-            }, configurationData.expectedDepth)
++            };
++            if (configurationData.dataType === ElisaUtils.Radio) {
++                delete viewProperties.showSection;
++                contentViewContainer.openViewCommon(radioGridView, viewProperties, configurationData.expectedDepth);
++            } else {
++                contentViewContainer.openViewCommon(dataTrackView, viewProperties, configurationData.expectedDepth);
++            }
+         }
+ 
+         onSwitchContextView: (expectedDepth, mainTitle, imageUrl) => {
+@@ -328,6 +334,14 @@
+     }
+ 
+     Component {
++        id: radioGridView
++
++        RadioGridView {
++            expandedFilterView: contentViewContainer.showExpandedFilterView
++        }
++    }
++
++    Component {
+         id: albumContext
+ 
+         ContextView {
+diff -r es-orig/elisa-26.08.1/src/qml/RadioGridView.qml es/elisa-26.08.1/src/qml/RadioGridView.qml
+--- a/src/qml/RadioGridView.qml
++++ b/src/qml/RadioGridView.qml
+@@ -0,0 +1,549 @@
++/*
++   SPDX-License-Identifier: LGPL-3.0-or-later
++ */
++
++pragma ComponentBehavior: Bound
++
++import QtQuick
++import QtQuick.Controls as QQC2
++import QtQuick.Layouts
++import QtCore
++
++import org.kde.ki18n
++import org.kde.kirigami as Kirigami
++import org.kde.elisa
++
++// Radio Stations as a resizable grid of tiles. SomaFM stations are enriched with the
++// live "now playing" song and listener count from somafm.com/channels.json.
++AbstractDataView {
++    id: radioView
++
++    readonly property int minTileSize: 120
++    readonly property int maxTileSize: 400
++    readonly property string liveUrl: "https://somafm.com/channels.json"
++
++    readonly property bool tiled: viewStyle === ViewManager.GridStyle
++
++    property int tileSize: 200
++    property int sortMode: 0 // 0: listeners, 1: A-Z
++    property var channels: ({})
++    property bool liveLoaded: false
++    property int totalListeners: 0
++
++    // Radio entries are the only thing shown, so there is no per-view model sort to apply
++    sortModel: false
++    canToggleViewStyle: true
++    viewStyle: ViewManager.GridStyle
++
++    Settings {
++        id: prefs
++        category: "RadioGridView"
++        property alias tileSize: radioView.tileSize
++        property alias sortMode: radioView.sortMode
++        property int viewStyle: ViewManager.GridStyle
++    }
++
++    Component.onCompleted: viewStyle = prefs.viewStyle
++    onViewStyleChanged: prefs.viewStyle = viewStyle
++
++    function setTileSize(size: real) {
++        tileSize = Math.round(Math.max(minTileSize, Math.min(maxTileSize, size)));
++    }
++
++    function openMetaDataView(url) {
++        metadataLoader.setSource(Kirigami.Settings.isMobile ? "mobile/MobileMediaTrackMetadataView.qml" : "MediaTrackMetadataView.qml",
++            {
++                fileName: url,
++                modelType: ElisaUtils.Radio,
++                showImage: false,
++                showTrackFileName: false,
++                showDeleteButton: true,
++                editableMetadata: true,
++                canAddMoreMetadata: false,
++            });
++        metadataLoader.active = true;
++    }
++
++    function openCreateRadioView() {
++        metadataLoader.setSource(Kirigami.Settings.isMobile ? "mobile/MobileMediaTrackMetadataView.qml" : "MediaTrackMetadataView.qml",
++            {
++                modelType: ElisaUtils.Radio,
++                isCreating: true,
++                showImage: false,
++                showTrackFileName: false,
++                showDeleteButton: true,
++                editableMetadata: true,
++                canAddMoreMetadata: false,
++            });
++        metadataLoader.active = true;
++    }
++
++    function play(srcRow: int, name: string) {
++        const fullData = contentModel.data(contentModel.index(srcRow, 0), DataTypes.FullDataRole);
++        ElisaApplication.mediaPlayListProxyModel.enqueue(fullData, name,
++                                                         ElisaUtils.ReplacePlayList,
++                                                         ElisaUtils.TriggerPlay);
++    }
++
++    // "http://ice1.somafm.com/groovesalad-256-mp3" -> channel "groovesalad"
++    function channelFor(url: string): var {
++        const match = /somafm\.com\/([a-z0-9]+)/i.exec(url);
++        return match ? channels[match[1]] : undefined;
++    }
++
++    function liveFields(url: string): var {
++        const channel = channelFor(url);
++        if (!channel) {
++            return {listeners: -1, nowPlaying: "", genre: "", desc: "", logo: ""};
++        }
++        return {
++            listeners: parseInt(channel.listeners) || 0,
++            nowPlaying: channel.lastPlaying || "",
++            genre: channel.genre || "",
++            desc: channel.description || "",
++            logo: channel.largeimage || channel.image || "",
++        };
++    }
++
++    // Rebuild the tiles from the database rows (stations added, removed or edited)
++    function rebuildTiles() {
++        tiles.clear();
++        const model = contentModel;
++        if (!model) {
++            return;
++        }
++        for (let row = 0; row < model.rowCount(); ++row) {
++            const idx = model.index(row, 0);
++            const url = String(model.data(idx, DataTypes.ResourceRole));
++            const live = liveFields(url);
++            const imageUrl = String(model.data(idx, DataTypes.ImageUrlRole) || "");
++            tiles.append({
++                srcRow: row,
++                title: String(model.data(idx, Qt.DisplayRole) || ""),
++                url: url,
++                imageUrl: imageUrl || live.logo,
++                desc: live.desc || String(model.data(idx, DataTypes.CommentRole) || ""),
++                genre: live.genre,
++                listeners: live.listeners,
++                nowPlaying: live.nowPlaying,
++            });
++        }
++        resort();
++    }
++
++    // Update tiles in place from the latest channel data
++    function applyLive() {
++        let total = 0;
++        for (let i = 0; i < tiles.count; ++i) {
++            const live = liveFields(tiles.get(i).url);
++            tiles.setProperty(i, "listeners", live.listeners);
++            tiles.setProperty(i, "nowPlaying", live.nowPlaying);
++            tiles.setProperty(i, "genre", live.genre);
++            if (live.desc) {
++                tiles.setProperty(i, "desc", live.desc);
++            }
++            if (live.listeners > 0) {
++                total += live.listeners;
++            }
++        }
++        totalListeners = total;
++        resort();
++    }
++
++    function resort() {
++        const order = [];
++        for (let i = 0; i < tiles.count; ++i) {
++            const tile = tiles.get(i);
++            order.push({row: tile.srcRow, listeners: tile.listeners, name: tile.title});
++        }
++        order.sort((a, b) => {
++            if (sortMode === 0 && a.listeners !== b.listeners) {
++                return b.listeners - a.listeners;
++            }
++            return a.name.localeCompare(b.name);
++        });
++        for (let i = 0; i < order.length; ++i) {
++            if (tiles.get(i).srcRow === order[i].row) {
++                continue;
++            }
++            for (let j = i + 1; j < tiles.count; ++j) {
++                if (tiles.get(j).srcRow === order[i].row) {
++                    tiles.move(j, i, 1);
++                    break;
++                }
++            }
++        }
++    }
++
++    function refreshLive() {
++        if (fetching) {
++            return;
++        }
++        fetching = true;
++        const xhr = new XMLHttpRequest();
++        xhr.onreadystatechange = () => {
++            if (xhr.readyState !== XMLHttpRequest.DONE) {
++                return;
++            }
++            fetching = false;
++            if (xhr.status !== 200) {
++                console.warn("SomaFM live data unavailable:", xhr.status);
++                return;
++            }
++            try {
++                const map = {};
++                for (const channel of JSON.parse(xhr.responseText).channels) {
++                    map[channel.id] = channel;
++                }
++                channels = map;
++                liveLoaded = true;
++                applyLive();
++            } catch (e) {
++                console.warn("SomaFM live data unreadable:", e);
++            }
++        };
++        xhr.open("GET", liveUrl);
++        xhr.send();
++    }
++
++    property bool fetching: false
++
++    onSortModeChanged: resort()
++    onContentModelChanged: rebuildTiles()
++
++    ListModel {
++        id: tiles
++    }
++
++    Timer {
++        interval: 30000
++        repeat: true
++        running: radioView.visible
++        triggeredOnStart: true
++        onTriggered: radioView.refreshLive()
++    }
++
++    // Coalesce bursts of model signals into a single rebuild
++    Timer {
++        id: rebuildTimer
++        interval: 0
++        onTriggered: radioView.rebuildTiles()
++    }
++
++    Connections {
++        target: radioView.contentModel
++
++        function onRowsInserted() { rebuildTimer.restart(); }
++        function onRowsRemoved() { rebuildTimer.restart(); }
++        function onModelReset() { rebuildTimer.restart(); }
++        function onLayoutChanged() { rebuildTimer.restart(); }
++        function onDataChanged() { rebuildTimer.restart(); }
++    }
++
++    Connections {
++        target: radioView.navigationBar
++
++        function onCreateRadio() {
++            radioView.openCreateRadioView();
++        }
++    }
++
++    Loader {
++        id: metadataLoader
++        active: false
++        onLoaded: {
++            if (Kirigami.Settings.isMobile) {
++                mainWindow.pageStack.layers.push(item);
++            } else {
++                (item as MediaTrackMetadataView).show();
++            }
++        }
++    }
++
++    contentView: GridView {
++        id: tileView
++
++        activeFocusOnTab: true
++        keyNavigationEnabled: true
++        reuseItems: true
++        clip: true
++
++        model: tiles
++
++        Accessible.role: Accessible.List
++        Accessible.name: radioView.mainTitle
++
++        readonly property real textHeight: Kirigami.Units.gridUnit * 4.5
++
++        cellWidth: radioView.tiled
++            ? Math.floor(width / Math.max(1, Math.floor(width / radioView.tileSize)))
++            : width
++        cellHeight: radioView.tiled
++            ? cellWidth + textHeight
++            : Kirigami.Units.gridUnit * 4
++
++        move: Transition {
++            NumberAnimation { properties: "x,y"; duration: Kirigami.Units.longDuration; easing.type: Easing.InOutQuad }
++        }
++
++        WheelHandler {
++            acceptedModifiers: Qt.ControlModifier
++            onWheel: event => radioView.setTileSize(radioView.tileSize + (event.angleDelta.y > 0 ? 20 : -20))
++        }
++
++        PinchHandler {
++            id: pinch
++            target: null
++            property real startSize
++            onActiveChanged: if (active) startSize = radioView.tileSize
++            onActiveScaleChanged: if (active) radioView.setTileSize(startSize * activeScale)
++        }
++
++        header: RowLayout {
++            width: tileView.width
++            spacing: Kirigami.Units.largeSpacing
++
++            QQC2.Label {
++                Layout.leftMargin: Kirigami.Units.largeSpacing
++                Layout.fillWidth: true
++                elide: Text.ElideRight
++                color: Kirigami.Theme.disabledTextColor
++                text: radioView.liveLoaded
++                    ? KI18n.i18nc("@info SomaFM live stats", "SomaFM: %1 listeners right now", radioView.totalListeners)
++                    : ""
++            }
++
++            QQC2.Label {
++                text: KI18n.i18nc("@label:listbox", "Sort by")
++            }
++
++            QQC2.ComboBox {
++                model: [KI18n.i18nc("@item:inlistbox", "Listeners"), KI18n.i18nc("@item:inlistbox", "A–Z")]
++                currentIndex: radioView.sortMode
++                onActivated: index => radioView.sortMode = index
++            }
++
++            QQC2.Label {
++                visible: radioView.tiled
++                text: KI18n.i18nc("@label:slider", "Size")
++            }
++
++            QQC2.Slider {
++                visible: radioView.tiled
++                Layout.preferredWidth: Kirigami.Units.gridUnit * 8
++                Layout.rightMargin: Kirigami.Units.largeSpacing
++                from: radioView.minTileSize
++                to: radioView.maxTileSize
++                stepSize: 10
++                value: radioView.tileSize
++                onMoved: radioView.setTileSize(value)
++                Accessible.name: KI18n.i18nc("@label:slider", "Tile size")
++            }
++        }
++
++        delegate: QQC2.ItemDelegate {
++            id: tile
++
++            required property int index
++            required property int srcRow
++            required property string title
++            required property string url
++            required property string imageUrl
++            required property string desc
++            required property string genre
++            required property int listeners
++            required property string nowPlaying
++
++            readonly property bool tiled: radioView.tiled
++            readonly property bool isPlaying: ElisaApplication.manageHeaderBar.trackType === ElisaUtils.Radio
++                && String(ElisaApplication.manageHeaderBar.fileUrl) === url
++
++            width: GridView.view.cellWidth
++            height: GridView.view.cellHeight
++            padding: Kirigami.Units.smallSpacing
++
++            highlighted: GridView.isCurrentItem && activeFocus
++
++            QQC2.ToolTip.visible: hovered && desc.length > 0
++            QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
++            QQC2.ToolTip.text: desc
++
++            Accessible.name: title
++            Accessible.description: nowPlaying
++
++            onClicked: {
++                GridView.view.currentIndex = index;
++                radioView.play(srcRow, title);
++            }
++
++            TapHandler {
++                acceptedButtons: Qt.RightButton
++                onTapped: contextMenu.popup()
++            }
++
++            QQC2.Menu {
++                id: contextMenu
++
++                QQC2.MenuItem {
++                    icon.name: "media-playback-start"
++                    text: KI18n.i18nc("@action:inmenu", "Play")
++                    onTriggered: radioView.play(tile.srcRow, tile.title)
++                }
++                QQC2.MenuItem {
++                    icon.name: "document-edit"
++                    text: KI18n.i18nc("@action:inmenu", "Edit…")
++                    onTriggered: radioView.openMetaDataView(tile.url)
++                }
++            }
++
++            contentItem: GridLayout {
++                columns: tile.tiled ? 1 : 2
++                columnSpacing: Kirigami.Units.largeSpacing
++                rowSpacing: Kirigami.Units.smallSpacing
++
++                Item {
++                    id: art
++
++                    Layout.fillWidth: tile.tiled
++                    Layout.preferredWidth: tile.tiled ? tile.availableWidth : tile.availableHeight
++                    Layout.preferredHeight: tile.tiled ? tile.availableWidth : tile.availableHeight
++
++                    Rectangle {
++                        anchors.fill: parent
++                        color: Kirigami.Theme.alternateBackgroundColor
++                    }
++
++                    Image {
++                        anchors.fill: parent
++                        source: tile.imageUrl
++                        sourceSize.width: 512
++                        sourceSize.height: 512
++                        fillMode: Image.PreserveAspectCrop
++                        asynchronous: true
++                    }
++
++                    Kirigami.Icon {
++                        anchors.centerIn: parent
++                        width: parent.width / 3
++                        height: width
++                        source: "radio"
++                        visible: tile.imageUrl.length === 0
++                    }
++
++                    // live listener count
++                    Rectangle {
++                        visible: tile.listeners >= 0
++                        anchors.top: parent.top
++                        anchors.right: parent.right
++                        anchors.margins: Kirigami.Units.smallSpacing
++                        radius: height / 2
++                        color: "#b3000000"
++                        width: listenerRow.implicitWidth + Kirigami.Units.largeSpacing
++                        height: listenerRow.implicitHeight + Kirigami.Units.smallSpacing
++
++                        Row {
++                            id: listenerRow
++                            anchors.centerIn: parent
++                            spacing: Kirigami.Units.smallSpacing
++
++                            Kirigami.Icon {
++                                anchors.verticalCenter: parent.verticalCenter
++                                width: Kirigami.Units.iconSizes.small
++                                height: width
++                                source: "audio-headphones-symbolic"
++                                color: "white"
++                            }
++                            Text {
++                                anchors.verticalCenter: parent.verticalCenter
++                                color: "white"
++                                font.pointSize: Kirigami.Theme.smallFont.pointSize
++                                text: tile.listeners
++                            }
++                        }
++                    }
++
++                    // genre
++                    Rectangle {
++                        visible: tile.tiled && tile.genre.length > 0
++                        anchors.top: parent.top
++                        anchors.left: parent.left
++                        anchors.margins: Kirigami.Units.smallSpacing
++                        radius: height / 2
++                        color: "#b3000000"
++                        width: Math.min(genreText.implicitWidth + Kirigami.Units.largeSpacing, parent.width / 2)
++                        height: genreText.implicitHeight + Kirigami.Units.smallSpacing
++
++                        Text {
++                            id: genreText
++                            anchors.centerIn: parent
++                            width: parent.width - Kirigami.Units.largeSpacing
++                            horizontalAlignment: Text.AlignHCenter
++                            elide: Text.ElideRight
++                            color: "white"
++                            font.pointSize: Kirigami.Theme.smallFont.pointSize
++                            text: tile.genre
++                        }
++                    }
++
++                    // currently playing station
++                    Rectangle {
++                        anchors.fill: parent
++                        visible: tile.isPlaying
++                        color: "transparent"
++                        border.width: 3
++                        border.color: Kirigami.Theme.highlightColor
++                    }
++                    Rectangle {
++                        visible: tile.isPlaying
++                        anchors.bottom: parent.bottom
++                        anchors.right: parent.right
++                        width: Kirigami.Units.iconSizes.medium
++                        height: width
++                        color: Kirigami.Theme.highlightColor
++
++                        Kirigami.Icon {
++                            anchors.fill: parent
++                            anchors.margins: 2
++                            source: "media-playback-start"
++                            color: Kirigami.Theme.highlightedTextColor
++                        }
++                    }
++                }
++
++                ColumnLayout {
++                    Layout.fillWidth: true
++                    Layout.fillHeight: true
++                    spacing: 0
++
++                    QQC2.Label {
++                        Layout.fillWidth: true
++                        elide: Text.ElideRight
++                        font.weight: Font.DemiBold
++                        text: tile.title
++                    }
++
++                    QQC2.Label {
++                        Layout.fillWidth: true
++                        Layout.fillHeight: true
++                        visible: tile.nowPlaying.length > 0
++                        wrapMode: Text.Wrap
++                        maximumLineCount: tile.tiled ? 2 : 1
++                        elide: Text.ElideRight
++                        text: tile.nowPlaying
++                    }
++
++                    QQC2.Label {
++                        Layout.fillWidth: true
++                        Layout.fillHeight: true
++                        visible: tile.nowPlaying.length === 0
++                        wrapMode: Text.Wrap
++                        maximumLineCount: tile.tiled ? 2 : 1
++                        elide: Text.ElideRight
++                        color: Kirigami.Theme.disabledTextColor
++                        text: tile.desc
++                    }
++                }
++            }
++        }
++    }
++}
