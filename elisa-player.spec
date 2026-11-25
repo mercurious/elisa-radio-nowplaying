@@ -21,6 +21,8 @@ Source0: https://download.kde.org/%{stable_kf6}/release-service/%{version}/src/e
 Patch0:  elisa-mpris-radio-metadata.patch
 # Local: use VLC's PulseAudio output so PipeWire plays at the track's native sample rate
 Patch1:  elisa-libvlc-pulse-output.patch
+# Local: Radio Stations as a resizable tile grid with live SomaFM now-playing and listener counts
+Patch2:  elisa-radio-grid-view.patch
 
 BuildRequires:  gcc-c++
 BuildRequires:  cmake
