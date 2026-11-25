@@ -9,6 +9,27 @@ diff -r es-orig/elisa-26.08.1/src/CMakeLists.txt es/elisa-26.08.1/src/CMakeLists
          qml/DurationSlider.qml
          qml/ElisaMainWindow.qml
          qml/FlatButtonWithToolTip.qml
+diff -r es-orig/elisa-26.08.1/src/qml/AbstractDataView.qml es/elisa-26.08.1/src/qml/AbstractDataView.qml
+--- a/src/qml/AbstractDataView.qml
++++ b/src/qml/AbstractDataView.qml
+@@ -39,6 +39,8 @@
+     property bool showCreateRadioButton: false
+     property bool showEnqueueButton: false
+     property bool displaySingleAlbum: false
++    // Subclasses whose delegate model is not the displayed model can override this
++    property int itemCount: delegateModel.count
+     property alias showRating: navigationBar.showRating
+     property alias sortRole: navigationBar.sortRole
+     property alias sortRoles: navigationBar.sortRoles
+@@ -200,7 +202,7 @@
+         anchors.centerIn: parent
+         anchors.verticalCenterOffset: Math.round(navigationBar.height / 2)
+         width: parent.width - (Kirigami.Units.largeSpacing * 4)
+-        active: delegateModel.count === 0 && !busyIndicatorLoader.active
++        active: abstractView.itemCount === 0 && !busyIndicatorLoader.active
+         visible: active && status === Loader.Ready
+ 
+         sourceComponent: Kirigami.PlaceholderMessage {
 diff -r es-orig/elisa-26.08.1/src/qml/ContentView.qml es/elisa-26.08.1/src/qml/ContentView.qml
 --- a/src/qml/ContentView.qml
 +++ b/src/qml/ContentView.qml
@@ -54,7 +75,7 @@ diff -r es-orig/elisa-26.08.1/src/qml/ContentView.qml es/elisa-26.08.1/src/qml/C
 diff -r es-orig/elisa-26.08.1/src/qml/RadioGridView.qml es/elisa-26.08.1/src/qml/RadioGridView.qml
 --- a/src/qml/RadioGridView.qml
 +++ b/src/qml/RadioGridView.qml
-@@ -0,0 +1,549 @@
+@@ -0,0 +1,551 @@
 +/*
 +   SPDX-License-Identifier: LGPL-3.0-or-later
 + */
@@ -86,6 +107,8 @@ diff -r es-orig/elisa-26.08.1/src/qml/RadioGridView.qml es/elisa-26.08.1/src/qml
 +    property var channels: ({})
 +    property bool liveLoaded: false
 +    property int totalListeners: 0
++
++    itemCount: tiles.count
 +
 +    // Radio entries are the only thing shown, so there is no per-view model sort to apply
 +    sortModel: false
